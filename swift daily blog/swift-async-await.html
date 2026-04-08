@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Swift Concurrency: async/await deep dive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,700;1,9..144,400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --orange: #f78166;
+    --blue: #79c0ff;
+    --green: #56d364;
+    --yellow: #e3b341;
+    --purple: #d2a8ff;
+    --text: #e6edf3;
+    --muted: #8b949e;
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Fraunces', Georgia, serif;
+    line-height: 1.8;
+    min-height: 100vh;
+  }
+  /* Header */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 56px;
+  }
+  .logo { font-family: 'JetBrains Mono', monospace; font-size: .85rem; color: var(--orange); letter-spacing: .05em; }
+  .tag-pill {
+    background: rgba(247,129,102,.12); color: var(--orange);
+    border: 1px solid rgba(247,129,102,.3);
+    padding: .2rem .75rem; border-radius: 99px;
+    font-family: 'JetBrains Mono', monospace; font-size: .75rem;
+  }
+  /* Hero */
+  .hero {
+    max-width: 820px; margin: 5rem auto 0; padding: 0 2rem;
+    position: relative;
+  }
+  .hero-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .75rem; color: var(--blue); letter-spacing: .12em;
+    text-transform: uppercase; margin-bottom: 1.25rem;
+    display: flex; align-items: center; gap: .5rem;
+  }
+  .hero-label::before {
+    content: ''; display: inline-block;
+    width: 28px; height: 1px; background: var(--blue);
+  }
+  h1 {
+    font-size: clamp(2rem, 5vw, 3.25rem);
+    font-weight: 700; line-height: 1.18;
+    letter-spacing: -.02em;
+    margin-bottom: 1.5rem;
+  }
+  h1 .accent { color: var(--orange); font-style: italic; }
+  .meta {
+    display: flex; align-items: center; gap: 1.25rem;
+    font-family: 'JetBrains Mono', monospace; font-size: .78rem;
+    color: var(--muted); margin-bottom: 3rem; flex-wrap: wrap;
+  }
+  .meta span { display: flex; align-items: center; gap: .35rem; }
+  .divider { width: 1px; height: 12px; background: var(--border); }
+  /* Article body */
+  article {
+    max-width: 820px; margin: 0 auto; padding: 0 2rem 6rem;
+  }
+  article h2 {
+    font-size: 1.55rem; font-weight: 700;
+    margin: 3rem 0 1rem;
+    color: var(--text); letter-spacing: -.015em;
+    padding-bottom: .5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  article h3 {
+    font-size: 1.15rem; font-weight: 700;
+    margin: 2rem 0 .75rem; color: var(--blue);
+  }
+  article p { margin-bottom: 1.4rem; color: #c9d1d9; }
+  article ul, article ol { margin: 0 0 1.4rem 1.5rem; color: #c9d1d9; }
+  article li { margin-bottom: .4rem; }
+  article strong { color: var(--text); font-weight: 700; }
+  article em { color: var(--yellow); font-style: italic; }
+  /* Code blocks */
+  pre {
+    background: #010409;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--orange);
+    border-radius: 8px;
+    padding: 1.5rem 1.75rem;
+    overflow-x: auto;
+    margin: 1.75rem 0;
+    position: relative;
+  }
+  pre::before {
+    content: 'Swift';
+    position: absolute; top: .6rem; right: 1rem;
+    font-family: 'JetBrains Mono', monospace; font-size: .65rem;
+    color: var(--muted); letter-spacing: .08em;
+  }
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .85rem; line-height: 1.7;
+    color: var(--green);
+  }
+  p code, li code {
+    background: rgba(86,211,100,.08);
+    color: var(--green); padding: .1em .35em;
+    border-radius: 4px; font-size: .82em;
+  }
+  /* Callout */
+  .callout {
+    background: rgba(121,192,255,.06);
+    border: 1px solid rgba(121,192,255,.25);
+    border-left: 3px solid var(--blue);
+    border-radius: 8px; padding: 1.25rem 1.5rem;
+    margin: 2rem 0;
+  }
+  .callout-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .7rem; color: var(--blue); letter-spacing: .1em;
+    text-transform: uppercase; margin-bottom: .5rem;
+  }
+  .callout p { margin: 0; color: #c9d1d9; }
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 2.5rem 2rem; text-align: center;
+    font-family: 'JetBrains Mono', monospace; font-size: .78rem;
+    color: var(--muted);
+  }
+  footer a { color: var(--orange); text-decoration: none; }
+  .footer-logo { color: var(--orange); margin-bottom: .5rem; font-size: 1rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">⌥ rrj/swift/blog</span>
+  <span class="tag-pill">Senior Developer Series</span>
+</header>
+
+<div class="hero">
+  <div class="hero-label">Swift · In Depth</div>
+  <h1>Swift Concurrency: async/await deep <span class="accent">dive</span></h1>
+  <div class="meta">
+    <span>📅 April 3, 2026</span>
+    <span class="divider"></span>
+    <span>⏱ 8 min read</span>
+    <span class="divider"></span>
+    <span>🏷 Swift Concurrency: async/await deep dive</span>
+  </div>
+</div>
+
+<article>
+<p>Swift Concurrency landed in Swift 5.5 and fundamentally changed how we write asynchronous code on Apple platforms. After years of callback hell, delegate soup, and the occasional Combine pipeline that reads like an abstract art piece, <code>async/await</code> gave us something we didn't know we desperately needed: asynchronous code that reads like synchronous code. But using it well in production is a different story from understanding the syntax. This post is the first in a series aimed at senior developers who want to go beyond the WWDC highlights and understand the machinery underneath.</p>
+
+<h2>The Suspension Model: What async/await Actually Does</h2>
+
+<p>The most important mental model shift is understanding that <code>await</code> is not a blocking call. When a function hits an <code>await</code> expression, it <em>suspends</em> — it gives up its thread so the runtime can schedule other work. This is radically different from locking a thread with a semaphore or a completion-handler chain sitting on a dispatch queue.</p>
+
+<p>Consider what happens under the hood with a simple network call:</p>
+
+<pre><code>func fetchUser(id: String) async throws -> User {
+    let url = URL(string: "https://api.example.com/users/\(id)")!
+    let (data, response) = try await URLSession.shared.data(from: url)
+
+    guard let httpResponse = response as? HTTPURLResponse,
+          httpResponse.statusCode == 200 else {
+        throw APIError.invalidResponse
+    }
+
+    return try JSONDecoder().decode(User.self, from: data)
+}
+</code></pre>
+
+<p>When execution reaches <code>try await URLSession.shared.data(from: url)</code>, the function suspends. The thread is freed. No thread is being held hostage waiting for network I/O. When the response arrives, the Swift concurrency runtime resumes the function — potentially on a different thread, though the actor model and main-actor annotations give us guarantees about <em>which</em> executor resumes us. This cooperative threading model is why Swift concurrency can scale to massive numbers of concurrent tasks without the thread-explosion problem that plagued GCD.</p>
+
+<p>A function marked <code>async</code> can only be called from another <code>async</code> context or from a <code>Task</code>. This is intentional. It enforces a clear boundary between your synchronous and asynchronous worlds, and it prevents you from accidentally blocking a thread from a sync context.</p>
+
+<h2>Structured Concurrency: Task Groups and Child Tasks</h2>
+
+<p>One of the most underappreciated parts of Swift Concurrency is the <em>structure</em> it imposes on concurrent work. With GCD, you could fire off a dozen <code>DispatchQueue.async</code> calls and the compiler had no idea what you were doing. Cancellation was manual. Lifetimes were implicit. Errors disappeared into the ether.</p>
+
+<p>Structured concurrency changes this. Every <code>Task</code> has a parent, and the parent doesn't complete until all of its children complete. This gives you automatic cancellation propagation and sane error semantics.</p>
+
+<pre><code>func loadDashboard(for userID: String) async throws -> Dashboard {
+    async let profile = fetchProfile(userID: userID)
+    async let feed = fetchFeed(userID: userID)
+    async let notifications = fetchNotifications(userID: userID)
+
+    // All three requests are in flight concurrently.
+    // If any one throws, the others are automatically cancelled.
+    return try await Dashboard(
+        profile: profile,
+        feed: feed,
+        notifications: notifications
+    )
+}
+</code></pre>
+
+<p>The <code>async let</code> pattern is the lightweight version of a task group. All three network calls start immediately and run concurrently. The <code>try await</code> at the bottom waits for all three. If <code>fetchProfile</code> throws, Swift automatically cancels the other two in-flight tasks. You don't write a single line of cancellation logic.</p>
+
+<p>For dynamic concurrency — where you don't know at compile time how many tasks you need — reach for <code>withThrowingTaskGroup</code>:</p>
+
+<pre><code>func fetchAllUsers(ids: [String]) async throws -> [User] {
+    try await withThrowingTaskGroup(of: User.self) { group in
+        for id in ids {
+            group.addTask { try await fetchUser(id: id) }
+        }
+
+        var users: [User] = []
+        for try await user in group {
+            users.append(user)
+        }
+        return users
+    }
+}
+</code></pre>
+
+<p>The group automatically propagates cancellation inward and waits for all children before returning. Notice that iterating the group with <code>for try await</code> gives you results as they complete — not in insertion order. If order matters, return a tuple <code>(index, User)</code> and sort afterward.</p>
+
+<p>One subtlety that bites teams in production: adding a task to a group after the group's body returns is a compile-time error. The structured lifetime is enforced by the type system, not convention. This is Swift Concurrency doing its job.</p>
+
+<h2>Actors: Isolation Without Locks</h2>
+
+<p>Before actors, protecting shared mutable state meant manual synchronization — <code>DispatchQueue</code> barriers, <code>NSLock</code>, <code>os_unfair_lock</code>. All of them correct when used carefully, all of them silent time bombs when used carelessly.</p>
+
+<p>Actors give you data isolation as a language-level guarantee. The compiler won't let you read or mutate actor-isolated state from outside the actor without crossing an <code>await</code> boundary.</p>
+
+<pre><code>actor UserCache {
+    private var store: [String: User] = [:]
+
+    func user(for id: String) -> User? {
+        store[id]
+    }
+
+    func insert(_ user: User, for id: String) {
+        store[id] = user
+    }
+}
+</code></pre>
+
+<p>Accessing <code>cache.user(for:)</code> from outside the actor requires <code>await</code>. No <code>await</code>, no access — the compiler enforces it. There are no locks in your code because the actor's executor serialises access for you.</p>
+
+<p>Where senior devs run into trouble: actor reentrancy. An actor suspends at every <code>await</code>, and while it's suspended another caller can enter. This means state you read before an <code>await</code> may be stale by the time the function resumes.</p>
+
+<pre><code>actor ImageLoader {
+    private var cache: [URL: UIImage] = [:]
+
+    func image(for url: URL) async throws -> UIImage {
+        if let cached = cache[url] { return cached }
+
+        // ⚠️ Actor is suspended here. Another caller can enter.
+        let image = try await downloadImage(from: url)
+
+        // cache[url] might already be set by the time we resume.
+        // This is safe (just redundant work), but in other contexts
+        // it could be a logical race.
+        cache[url] = image
+        return image
+    }
+}
+</code></pre>
+
+<p>Reentrancy isn't a bug — it's a deliberate design choice that prevents deadlocks. The fix is to check your invariants again after every <code>await</code>, or restructure to avoid the interleaving entirely.</p>
+
+<h2>@MainActor: The UI Thread Contract</h2>
+
+<p><code>@MainActor</code> is just a global actor that runs on the main thread. Marking a type or function with it gives you a compiler-enforced guarantee that code runs on the main queue — no more <code>DispatchQueue.main.async</code> sprinkled through your view models.</p>
+
+<pre><code>@MainActor
+final class FeedViewModel: ObservableObject {
+    @Published var posts: [Post] = []
+    @Published var isLoading = false
+
+    func loadPosts() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            // Suspends here — jumps off main thread for the network call
+            let fetched = try await postService.fetchLatest()
+            // Resumes back on main actor automatically
+            posts = fetched
+        } catch {
+            // Handle error on main actor
+        }
+    }
+}
+</code></pre>
+
+<p>The important nuance: crossing into a <code>@MainActor</code>-isolated context from a background task requires <code>await</code>. The runtime hops to the main thread's executor before entering. This hop is cheap — far cheaper than <code>DispatchQueue.main.async</code> — because the Swift concurrency runtime can batch these hops efficiently.</p>
+
+<p>Mark your entire view model <code>@MainActor</code> rather than sprinkling <code>DispatchQueue.main.async</code> on individual property assignments. It's the safer, more expressive pattern.</p>
+
+<h2>Cancellation: Cooperative, Not Preemptive</h2>
+
+<p>Swift concurrency uses cooperative cancellation. Cancelling a task doesn't forcibly stop it — it sets a flag that the task is expected to check. If you write a long-running task that never checks for cancellation, it will run to completion regardless.</p>
+
+<pre><code>func processLargeDataset(_ items: [DataItem]) async throws -> [Result] {
+    var results: [Result] = []
+
+    for item in items {
+        // Explicitly check — throws CancellationError if cancelled
+        try Task.checkCancellation()
+
+        let result = try await process(item)
+        results.append(result)
+    }
+
+    return results
+}
+</code></pre>
+
+<p><code>Task.checkCancellation()</code> throws <code>CancellationError</code> if the task has been cancelled, which unwinds the stack cleanly. For tighter loops where you want to check but not throw, use <code>Task.isCancelled</code> as a boolean.</p>
+
+<p>Well-behaved async APIs — <code>URLSession</code>, <code>FileManager</code> async methods — already check for cancellation at their suspension points. Your own CPU-bound loops need to opt in manually.</p>
+
+<div class="callout">
+<div class="callout-label">💡 Pro Tip</div>
+<p>Wrap long-running CPU work in <code>Task.detached(priority: .utility)</code> so it doesn't inherit the calling task's priority and accidentally starve your UI. Pass results back to the main actor explicitly when done.</p>
+</div>
+
+<h2>Key Takeaways</h2>
+
+<p>Swift Concurrency is not just a syntactic upgrade — it's a complete rethinking of how asynchronous work is structured, scheduled, and made safe.</p>
+
+<p>The five things to internalise before writing production async/await code:</p>
+
+<ul>
+<li><strong>await suspends, it doesn't block.</strong> Threads are freed at every suspension point — this is the foundation of the whole system's scalability.</li>
+<li><strong>Structured concurrency enforces lifetime and cancellation.</strong> Prefer <code>async let</code> and task groups over unstructured <code>Task { }</code> whenever you can.</li>
+<li><strong>Actors eliminate data races at the compiler level.</strong> But respect reentrancy — your invariants can change across any <code>await</code>.</li>
+<li><strong>@MainActor is the right abstraction for UI state.</strong> Apply it at the type level, not method-by-method.</li>
+<li><strong>Cancellation is cooperative.</strong> If you write long-running work, you own the responsibility of checking for it.</li>
+</ul>
+
+<p>The next post in this series covers the Swift concurrency runtime internals — thread pools, executor contracts, and why you almost never need <code>Task.detached</code> but must understand when you do.</p>
+
+</article>
+
+<footer>
+  <div style="margin-bottom: 1.5rem;">
+    <p style="font-size: .78rem; color: #8b949e; margin: 0.5rem 0;">Senior Developer Blog · Written with ❤️ and caffeine</p>
+  </div>
+  
+  <div class="social-icons" style="display: flex; gap: 1rem; justify-content: center; margin-bottom: 1rem;">
+    <!-- GitHub Icon -->
+    <a href="https://github.com/RaviRajaJangid" target="_blank" rel="noopener noreferrer" title="GitHub" class="social-link github" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #f78166; transition: opacity .15s;">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 20px; height: 20px; fill: currentColor;">
+        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v 3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"></path>
+      </svg>
+    </a>
+
+    <!-- LinkedIn Icon -->
+    <a href="http://www.linkedin.com/in/ravi-raja-jangid" target="_blank" rel="noopener noreferrer" title="LinkedIn" class="social-link linkedin" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #f78166; transition: opacity .15s;">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 20px; height: 20px; fill: currentColor;">
+        <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.225 0z"></path>
+      </svg>
+    </a>
+
+    <!-- Stack Overflow Icon -->
+    <a href="https://meta.stackoverflow.com/users/2788677/ravi-raja-jangid" target="_blank" rel="noopener noreferrer" title="Stack Overflow" class="social-link stackoverflow" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #f78166; transition: opacity .15s;">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 20px; height: 20px; fill: currentColor;">
+        <path d="M18.986 21.865v-6.404h2.134V24H1.844v-8.539h2.134v6.404h15.008zM6.111 19.731h7.778v-1.927H6.111v1.927zm.259-4.852h7.52v-1.927H6.37v1.927zm19.23-5.556v-2.966h-2.166v2.966h2.166zm-2.166 6.12v-5.355h-2.134v5.355h2.134zm-1.074-15.345C21.195 0 24 2.81 24 6.22c0 3.434-2.805 6.22-6.26 6.22-3.454 0-6.26-2.786-6.26-6.22 0-3.41 2.806-6.22 6.26-6.22zm.918 11.064v-1.78h-7.779v1.78h7.779zm-8.852 2.635h-2.166v-5.355h2.166v5.355z"></path>
+      </svg>
+    </a>
+
+    <!-- Email Icon -->
+    <a href="mailto:ravirajajangid4@gmail.com" title="Email" class="social-link email" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #f78166; transition: opacity .15s;">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 20px; height: 20px; fill: currentColor;">
+        <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"></path>
+      </svg>
+    </a>
+
+    <!-- Medium Icon -->
+    <a href="https://medium.com/@raviraja.itpro" target="_blank" rel="noopener noreferrer" title="Medium" class="social-link medium" style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: #f78166; transition: opacity .15s;">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 20px; height: 20px; fill: currentColor;">
+        <path d="M13.54 12a6.8 6.8 0 01-6.77 6.82A6.8 6.8 0 010 12a6.8 6.8 0 016.77-6.82A6.8 6.8 0 0113.54 12zM20.96 12c0 3.54-1.51 6.42-3.38 6.42-1.87 0-3.39-2.88-3.39-6.42s1.52-6.42 3.39-6.42c1.87 0 3.38 2.88 3.38 6.42M24 12c0 3.17-.53 5.75-1.19 5.75-.59 0-1.07-2.15-1.07-5.4s.48-5.4 1.07-5.4c.66 0 1.19 2.58 1.19 5.75z"></path>
+      </svg>
+    </a>
+  </div>
+</footer>
+
+</body>
+</html>
